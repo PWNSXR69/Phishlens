@@ -1,0 +1,229 @@
+/* ---------------------------------------------------------
+   Design tokens
+   Palette: deep navy void + brand gold, with a HUD/scanner
+   feel via monospace readouts and camera-viewfinder corners
+   (the "lens" in PhishLens). Severity colors are the only
+   other hues allowed in — everything else stays quiet.
+   --------------------------------------------------------- */
+:root {
+  --void: #0B1330;
+  --panel: #141F45;
+  --gold: #C9A24B;
+  --gold-dim: #6b5a30;
+  --ink: #E9E7DF;
+  --slate: #7C86A3;
+  --safe: #5FC98D;
+  --warn: #E0A63C;
+  --danger: #E2584F;
+
+  --mono: ui-monospace, "SF Mono", "Cascadia Code", "Roboto Mono", Consolas, monospace;
+  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  width: 340px;
+  margin: 0;
+  background: var(--void);
+  color: var(--ink);
+  font-family: var(--sans);
+}
+
+/* ---------- Header ---------- */
+.hud-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px;
+  border-bottom: 1px solid rgba(201, 162, 75, 0.18);
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--mono);
+  font-size: 13px;
+  letter-spacing: 0.06em;
+  color: var(--gold);
+}
+.brand-mark { font-size: 15px; }
+.brand-name b { color: var(--ink); font-weight: 700; }
+
+.status-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--slate);
+  box-shadow: 0 0 0 3px rgba(255,255,255,0.04);
+  transition: background 0.2s ease;
+}
+.status-dot.safe { background: var(--safe); }
+.status-dot.suspicious { background: var(--warn); }
+.status-dot.dangerous { background: var(--danger); animation: dotPulse 1.2s ease-in-out infinite; }
+
+@keyframes dotPulse {
+  0%, 100% { box-shadow: 0 0 0 3px rgba(226, 88, 79, 0.15); }
+  50%      { box-shadow: 0 0 0 6px rgba(226, 88, 79, 0.25); }
+}
+
+/* ---------- Tabs ---------- */
+.tabs {
+  display: flex;
+  gap: 2px;
+  padding: 10px 16px 0 16px;
+}
+.tab {
+  flex: 1;
+  background: none;
+  border: none;
+  color: var(--slate);
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 8px 0;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+}
+.tab.active {
+  color: var(--gold);
+  border-bottom: 2px solid var(--gold);
+}
+
+.panel { display: none; padding: 16px; }
+.panel.active { display: block; }
+
+/* ---------- Viewfinder (signature element) ---------- */
+.viewfinder {
+  position: relative;
+  padding: 22px 14px;
+  margin-bottom: 14px;
+  text-align: center;
+  --accent: var(--slate);
+}
+.viewfinder.safe        { --accent: var(--safe); }
+.viewfinder.suspicious  { --accent: var(--warn); }
+.viewfinder.dangerous   { --accent: var(--danger); }
+
+.corner {
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--accent);
+  transition: border-color 0.2s ease;
+}
+.corner.tl { top: 0; left: 0; border-right: none; border-bottom: none; }
+.corner.tr { top: 0; right: 0; border-left: none; border-bottom: none; }
+.corner.bl { bottom: 0; left: 0; border-right: none; border-top: none; }
+.corner.br { bottom: 0; right: 0; border-left: none; border-top: none; }
+
+.viewfinder.dangerous .corner {
+  animation: cornerPulse 1.4s ease-in-out infinite;
+}
+@keyframes cornerPulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.45; }
+}
+
+.readout {
+  font-family: var(--mono);
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  color: var(--ink);
+}
+.subreadout {
+  margin-top: 4px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--slate);
+  word-break: break-all;
+}
+
+/* ---------- Findings ---------- */
+.findings {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.findings li {
+  font-size: 12.5px;
+  line-height: 1.45;
+  padding: 9px 10px;
+  margin-bottom: 6px;
+  background: var(--panel);
+  border-left: 2px solid var(--gold);
+  border-radius: 2px;
+  color: var(--ink);
+}
+.findings li::before {
+  content: "› ";
+  color: var(--gold);
+  font-family: var(--mono);
+}
+
+/* ---------- History ---------- */
+.history-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 260px;
+  overflow-y: auto;
+}
+.history-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 6px;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+  font-size: 12px;
+}
+.history-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.history-dot.safe { background: var(--safe); }
+.history-dot.suspicious { background: var(--warn); }
+.history-dot.dangerous { background: var(--danger); }
+
+.history-host {
+  flex: 1;
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 11.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.history-time {
+  color: var(--slate);
+  font-size: 10.5px;
+  flex-shrink: 0;
+}
+
+.history-empty {
+  color: var(--slate);
+  font-size: 12px;
+  text-align: center;
+  padding: 24px 0;
+}
+
+.clear-btn {
+  width: 100%;
+  margin-top: 10px;
+  background: none;
+  border: 1px solid var(--gold-dim);
+  color: var(--slate);
+  font-size: 11px;
+  padding: 7px;
+  border-radius: 3px;
+  cursor: pointer;
+}
+.clear-btn:hover {
+  border-color: var(--gold);
+  color: var(--gold);
+}

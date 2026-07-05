@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <div id="app">
+    <header class="hud-header">
+      <div class="brand">
+        <span class="brand-mark">◎</span>
+        <span class="brand-name">PHISH<b>LENS</b></span>
+      </div>
+      <span class="status-dot" id="statusDot"></span>
+    </header>
+
+    <nav class="tabs">
+      <button class="tab active" data-tab="scan">Scan</button>
+      <button class="tab" data-tab="history">History</button>
+    </nav>
+
+    <section id="scanPanel" class="panel active">
+      <div class="viewfinder" id="viewfinder">
+        <span class="corner tl"></span><span class="corner tr"></span>
+        <span class="corner bl"></span><span class="corner br"></span>
+        <div class="readout" id="readout">SCANNING…</div>
+        <div class="subreadout" id="hostReadout"></div>
+      </div>
+      <ul id="findings" class="findings"></ul>
+    </section>
+
+    <section id="historyPanel" class="panel">
+      <ul id="historyList" class="history-list"></ul>
+      <div class="history-empty" id="historyEmpty">No scans recorded yet.</div>
+      <button id="clearHistory" class="clear-btn">Clear history</button>
+    </section>
+  </div>
+  <script src="popup.js"></script>
+</body>
+</html>
