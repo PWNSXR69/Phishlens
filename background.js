@@ -6,16 +6,24 @@
  * in-memory state (tabState) is fine for "this session" data,
  * but anything we want to SURVIVE a service worker restart or
  * browser relaunch (like history) must go into chrome.storage.
+ *
+ * IMPORTANT NAMING RULE (learned the hard way, twice): every
+ * lib file loaded via importScripts() declares its functions in
+ * THIS SAME global scope. Never `const someName = ...` using a
+ * name that matches something a lib exports — always alias it
+ * to something different, or you get a SyntaxError that kills
+ * the whole service worker before it can register.
  * ---------------------------------------------------------
  */
 
 importScripts("lib/domain.js");
-// NOTE: domain.js declares a top-level `function getRegistrableDomain`.
-// importScripts() runs it in this SAME global scope (classic scripts,
-// not ES modules), so re-declaring that exact identifier here — even
-// via destructuring — throws a SyntaxError. We give it a different
-// local name and call through the namespace object instead.
-const getDomain = self.PhishLensDomain.getRegistrableDomain;
+importScripts("lib/redirect-analysis.js"); // depends on domain.js being loaded first
+importScripts("lib/severity.js");          // depends on nothing else
+
+const analyzeChain = self.PhishLensRedirect.analyzeRedirectChain;
+const getSeverityScore = self.PhishLensSeverity.computeSeverity;
+const getSeverityLabel = self.PhishLensSeverity.severityLabel;
+const getReasons = self.PhishLensSeverity.buildReasons;
 
 // tabId -> { chain: [url, ...], redirectFlag, lookalike, formFindings, hostname }
 const tabState = new Map();
@@ -25,101 +33,6 @@ function getState(tabId) {
     tabState.set(tabId, { chain: [], lookalike: null, formFindings: [], redirectFlag: null });
   }
   return tabState.get(tabId);
-}
-
-const KNOWN_SHORTENERS = new Set([
-  "bit.ly", "tinyurl.com", "t.co", "goo.gl", "ow.ly", "is.gd", "buff.ly",
-  "rebrand.ly", "cutt.ly", "shorturl.at",
-]);
-
-// Query params that commonly carry an "open redirect" target —
-// i.e. the site's own code forwards the visitor to whatever URL
-// is in this param, which attackers abuse to hide behind a
-// trusted domain for the first hop (e.g. trusted.com/go?url=evil.com).
-const OPEN_REDIRECT_PARAMS = ["url", "redirect", "redirect_uri", "next", "dest", "destination", "continue", "u", "target"];
-
-/**
- * LEARNING GOAL: redirects are suspicious in DEGREES, not
- * binary. A single redirect (naked domain -> www subdomain) is
- * completely normal. What we actually want is a SCORE built from
- * several independent signals, matching how Aegis's own HOT /
- * WARM / COLD scoring works — multiple weak signals compounding
- * into a strong verdict beats any single hard-coded rule.
- */
-function analyzeRedirectChain(chain) {
-  if (chain.length < 2) return null;
-
-  const hosts = chain.map((u) => {
-    try {
-      return new URL(u);
-    } catch {
-      return null;
-    }
-  }).filter(Boolean);
-
-  if (hosts.length < 2) return null;
-
-  const registrableDomains = hosts.map((u) => getDomain(u.hostname));
-  const distinctDomains = new Set(registrableDomains);
-  const finalHost = hosts[hosts.length - 1].hostname;
-
-  const signals = [];
-  let score = 0;
-
-  // Signal 1: passed through a known shortener
-  const shortenerHops = hosts.filter((u) => KNOWN_SHORTENERS.has(u.hostname));
-  if (shortenerHops.length > 0) {
-    score += 2;
-    signals.push(`Passed through known URL shortener: ${shortenerHops.map(u => u.hostname).join(", ")}`);
-  }
-
-  // Signal 2: chain crosses multiple UNRELATED registrable domains.
-  // (redirecting within the same site, e.g. paypal.com -> www.paypal.com,
-  // is normal and should NOT count here — that's why we compare
-  // registrable domains, not raw hostnames.)
-  if (distinctDomains.size >= 3) {
-    score += 2;
-    signals.push(`Chain crossed ${distinctDomains.size} unrelated domains before landing`);
-  } else if (distinctDomains.size === 2) {
-    score += 1;
-    signals.push(`Redirected from a different domain before landing on ${finalHost}`);
-  }
-
-  // Signal 3: long chain length is itself a mild red flag —
-  // legitimate sites rarely need more than 1-2 hops.
-  if (hosts.length >= 4) {
-    score += 1;
-    signals.push(`Unusually long redirect chain (${hosts.length} hops)`);
-  }
-
-  // Signal 4: protocol downgrade mid-chain (https -> http) — a
-  // real man-in-the-middle / downgrade-style red flag.
-  const downgraded = hosts.some((u, i) => i > 0 && hosts[i - 1].protocol === "https:" && u.protocol === "http:");
-  if (downgraded) {
-    score += 2;
-    signals.push("Chain downgraded from HTTPS to HTTP partway through");
-  }
-
-  // Signal 5: open-redirect-style query params pointing at a
-  // DIFFERENT domain than the one hosting them.
-  for (const u of hosts) {
-    for (const param of OPEN_REDIRECT_PARAMS) {
-      const val = u.searchParams.get(param);
-      if (!val) continue;
-      try {
-        const targetHost = new URL(val, u.href).hostname;
-        if (getDomain(targetHost) !== getDomain(u.hostname)) {
-          score += 1;
-          signals.push(`Open-redirect-style parameter "${param}" pointed to a different domain (${targetHost})`);
-        }
-      } catch {
-        // val wasn't a URL — ignore, not every "next=" param is a redirect target.
-      }
-    }
-  }
-
-  if (signals.length === 0) return null;
-  return { score, signals, hops: registrableDomains, finalHost };
 }
 
 chrome.webNavigation.onBeforeNavigate.addListener((details) => {
@@ -132,11 +45,11 @@ chrome.webNavigation.onBeforeNavigate.addListener((details) => {
 chrome.webNavigation.onCommitted.addListener((details) => {
   if (details.frameId !== 0) return;
   const state = getState(details.tabId);
-  state.redirectFlag = analyzeRedirectChain(state.chain);
+  state.redirectFlag = analyzeChain(state.chain);
   updateBadge(details.tabId);
 });
 
-// ---------- Receive findings from content.js ----------
+// ---------- Receive findings from content.js, respond with a verdict ----------
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type !== "PAGE_ANALYSIS") return;
   const tabId = sender.tab?.id;
@@ -148,35 +61,47 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   state.hostname = message.hostname;
 
   updateBadge(tabId);
-  recordHistoryEntry(tabId, state);
+  recordHistoryEntry(tabId, state); // fire-and-forget async write, doesn't block the response below
+
+  const score = getSeverityScore(state);
+  const severity = getSeverityLabel(score);
+  const reasons = getReasons(state);
+
+  if (severity === "dangerous") {
+    notifyDanger(state.hostname, reasons);
+  }
+
+  // Synchronous response — content.js uses this to decide whether
+  // to show the in-page warning banner.
+  sendResponse({ severity, reasons, score });
 });
 
 // ---------- Severity + badge ----------
-function computeSeverity(state) {
-  let score = 0;
-  if (state.lookalike) score += 3;
-  if (state.redirectFlag) score += state.redirectFlag.score;
-  if (state.formFindings?.some((f) => f.type === "cross_domain_form")) score += 3;
-  if (state.formFindings?.some((f) => f.type === "insecure_form")) score += 2;
-  return score;
-}
-
 function updateBadge(tabId) {
   const state = getState(tabId);
-  const score = computeSeverity(state);
+  const score = getSeverityScore(state);
+  const label = getSeverityLabel(score);
 
-  let text = "";
-  let color = "#4CAF50";
-  if (score >= 5) {
-    text = "!!!";
-    color = "#D32F2F";
-  } else if (score >= 2) {
-    text = "!";
-    color = "#F9A825";
-  }
+  const BADGE_BY_LABEL = {
+    safe: { text: "", color: "#4CAF50" },
+    suspicious: { text: "!", color: "#F9A825" },
+    dangerous: { text: "!!!", color: "#D32F2F" },
+  };
+  const { text, color } = BADGE_BY_LABEL[label];
 
   chrome.action.setBadgeText({ tabId, text });
   chrome.action.setBadgeBackgroundColor({ tabId, color });
+}
+
+// ---------- System notification for the worst cases ----------
+function notifyDanger(hostname, reasons) {
+  chrome.notifications.create({
+    type: "basic",
+    iconUrl: "icons/icon128.png",
+    title: "PhishLens: Danger detected",
+    message: `${hostname} — ${reasons[0] || "multiple phishing indicators found"}`,
+    priority: 2,
+  });
 }
 
 // ---------- Persistent history (chrome.storage.local) ----------
@@ -184,16 +109,12 @@ const HISTORY_KEY = "phishlens_history";
 const MAX_HISTORY = 200;
 
 async function recordHistoryEntry(tabId, state) {
-  const score = computeSeverity(state);
+  const score = getSeverityScore(state);
   const entry = {
     hostname: state.hostname,
     timestamp: Date.now(),
     score,
-    reasons: [
-      ...(state.lookalike ? [`Lookalike of ${state.lookalike.brand}`] : []),
-      ...(state.redirectFlag ? state.redirectFlag.signals : []),
-      ...(state.formFindings || []).map((f) => f.detail),
-    ],
+    reasons: getReasons(state),
   };
 
   const { [HISTORY_KEY]: existing = [] } = await chrome.storage.local.get(HISTORY_KEY);
@@ -209,9 +130,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type !== "GET_TAB_STATE") return;
   chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
     const tabId = tabs[0]?.id;
-    sendResponse(tabId != null ? getState(tabId) : null);
+    const state = tabId != null ? getState(tabId) : null;
+    if (!state) return sendResponse(null);
+
+    const score = getSeverityScore(state);
+    sendResponse({
+      ...state,
+      severity: getSeverityLabel(score),
+      reasons: getReasons(state),
+    });
   });
-  return true;
+  return true; // keep sendResponse alive for the async chrome.tabs.query
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {

@@ -4,7 +4,7 @@
   "private": true,
   "description": "Chrome extension: real-time phishing detection (lookalike domains, redirect chains, credential-stealing forms).",
   "scripts": {
-    "test": "vitest run",
+    "test": "node scripts/check-scope-collisions.js && vitest run",
     "test:watch": "vitest"
   },
   "devDependencies": {

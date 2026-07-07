@@ -8,7 +8,8 @@
     "webNavigation",
     "storage",
     "activeTab",
-    "scripting"
+    "scripting",
+    "notifications"
   ],
 
   "host_permissions": [

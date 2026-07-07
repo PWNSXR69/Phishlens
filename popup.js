@@ -4,8 +4,15 @@
  * Handles both tabs: the live "Scan" view (current tab's
  * findings) and the persistent "History" view (read from
  * chrome.storage.local via the background worker).
+ *
+ * Severity thresholds live in ONE place (lib/severity.js),
+ * loaded via a <script> tag in popup.html — this popup no
+ * longer keeps its own copy of "what counts as dangerous,"
+ * which is what let it silently drift from background.js
+ * before.
  * ---------------------------------------------------------
  */
+const getSeverityLabel = self.PhishLensSeverity.severityLabel;
 
 // ---------- Tab switching ----------
 document.querySelectorAll(".tab").forEach((btn) => {
@@ -25,28 +32,14 @@ const viewfinderEl = document.getElementById("viewfinder");
 const findingsEl = document.getElementById("findings");
 const statusDotEl = document.getElementById("statusDot");
 
-function severityFromCount(items) {
-  return items.length === 0 ? "safe" : items.length >= 2 ? "dangerous" : "suspicious";
-}
-
 chrome.runtime.sendMessage({ type: "GET_TAB_STATE" }, (state) => {
   if (!state) {
     readoutEl.textContent = "NO DATA";
     return;
   }
 
-  const items = [];
-  if (state.lookalike) {
-    items.push(
-      `Domain resembles <b>${state.lookalike.brand}</b> (${Math.round(state.lookalike.score * 100)}% match)`
-    );
-  }
-  if (state.redirectFlag) {
-    items.push(...state.redirectFlag.signals);
-  }
-  (state.formFindings || []).forEach((f) => items.push(f.detail));
-
-  const severity = severityFromCount(items);
+  const severity = state.severity || "safe"; // background.js now computes this for us
+  const reasons = state.reasons || [];
   const labels = { safe: "CLEAN", suspicious: "CAUTION", dangerous: "DANGER" };
 
   viewfinderEl.className = `viewfinder ${severity}`;
@@ -54,8 +47,8 @@ chrome.runtime.sendMessage({ type: "GET_TAB_STATE" }, (state) => {
   readoutEl.textContent = labels[severity];
   hostReadoutEl.textContent = state.hostname || "";
 
-  findingsEl.innerHTML = items.length
-    ? items.map((i) => `<li>${i}</li>`).join("")
+  findingsEl.innerHTML = reasons.length
+    ? reasons.map((r) => `<li>${r}</li>`).join("")
     : `<li>No phishing indicators detected on this page.</li>`;
 });
 
@@ -73,17 +66,13 @@ function timeAgo(ts) {
   return `${Math.round(diffHr / 24)}d ago`;
 }
 
-function severityFromScore(score) {
-  return score >= 5 ? "dangerous" : score >= 2 ? "suspicious" : "safe";
-}
-
 function loadHistory() {
   chrome.runtime.sendMessage({ type: "GET_HISTORY" }, (history) => {
     history = history || [];
     historyEmptyEl.style.display = history.length ? "none" : "block";
     historyListEl.innerHTML = history
       .map((entry) => {
-        const sev = severityFromScore(entry.score);
+        const sev = getSeverityLabel(entry.score); // same thresholds as background.js, guaranteed
         return `
           <li class="history-row" title="${(entry.reasons || []).join(" | ")}">
             <span class="history-dot ${sev}"></span>

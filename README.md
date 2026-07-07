@@ -21,6 +21,14 @@ as notes on the concepts behind each feature.
 - **Persistent scan history** — every analyzed page is written to `chrome.storage.local`
   (survives service worker restarts and browser relaunches), viewable in a History tab
   in the popup, with a clear-history control.
+- **In-page warning banner** — when a page scores "suspicious" or "dangerous",
+  `content.js` injects a dismissible banner directly into the page via Shadow DOM
+  (isolated from the page's own CSS in both directions), listing the specific reasons.
+  Deliberately does NOT mimic a native browser/OS warning — it's clearly labeled as
+  coming from the PhishLens extension, since spoofing trusted system UI is itself a
+  phishing technique.
+- **System notification for dangerous pages** — a `chrome.notifications` toast fires
+  for the worst-scoring pages, in addition to the in-page banner.
 - **Badge verdict** — green / amber / red badge on the extension icon; popup shows the
   specific reasons behind the verdict via a viewfinder-style HUD readout.
 
@@ -31,12 +39,38 @@ npm install
 npm test
 ```
 
-27 tests covering `levenshtein()`, `similarityScore()`, `normalizeHomoglyphs()`, and
-`getRegistrableDomain()`. A few are deliberately named `KNOWN LIMITATION: ...` — they
-document real edge cases where the simplified logic gets it wrong (e.g. `"modern"` →
-`"modem"` from the homoglyph normalizer) rather than hiding them. Encoding a known gap
-as a passing, clearly-labeled test is more honest than either silently accepting the
-bug or pretending it doesn't exist.
+`npm test` runs two things, in order:
+
+1. **`scripts/check-scope-collisions.js`** — this project hit the same bug three
+   separate times: two files, each valid on its own, throwing
+   `Identifier 'x' has already been declared` only once Chrome actually loads them
+   together into one shared scope (`importScripts()` in the service worker,
+   multiple `content_scripts` entries, multiple `<script>` tags in the popup).
+   `node --check somefile.js` can't catch this — it only ever sees one file at a
+   time. This script simulates the REAL load order for each shared-scope bundle
+   (reading it straight from `manifest.json` / `popup.html`, so it can't drift out
+   of sync with them) and compiles the concatenated result. Redeclaration errors are
+   a parse-time error, so compiling is enough — no browser, no mocking required.
+2. **Vitest** — 47 tests covering `levenshtein()`, `similarityScore()`,
+   `normalizeHomoglyphs()`, `getRegistrableDomain()`, `analyzeRedirectChain()`, and
+   the shared severity-scoring logic. A few are deliberately named
+   `KNOWN LIMITATION: ...` — they document real edge cases where the simplified
+   logic gets it wrong (e.g. `"modern"` → `"modem"` from the homoglyph normalizer)
+   rather than hiding them.
+
+The redirect-scoring logic lives in `lib/redirect-analysis.js` as a pure function —
+no `chrome.*` calls, just URL strings in, a plain object out. `background.js` is the
+thin "imperative shell" that wires real browser events to it. This split (often called
+"functional core, imperative shell") is what makes `analyzeRedirectChain` testable
+with zero mocking, even though it's the most complex logic in the project.
+
+**The naming rule that would have prevented all three bugs:** every `lib/*.js` file
+declares its exports as top-level `function`/`const` before attaching them to
+`globalThis.PhishLensX`. Any other file sharing that same scope (via `importScripts`,
+multiple `content_scripts` entries, or multiple `<script>` tags) must NEVER
+destructure or `const`-declare a name that matches one of those exports — always
+alias it to something different (e.g. `const getSeverityLabel = self.PhishLensSeverity.severityLabel`,
+not `const { severityLabel } = ...`).
 
 ## Install (unpacked, for development)
 
@@ -73,8 +107,13 @@ real security audit.
   `importScripts()` for loading shared library code into the worker.
 - **`chrome.storage.local`** — durable, async key-value storage that survives service
   worker restarts, vs. plain in-memory `Map` state which does not.
+- **Shared scoring logic** (`lib/severity.js`) — background.js and popup.js both read
+  the same thresholds instead of keeping their own copies that could silently drift.
+- **Shadow DOM for style isolation** — the in-page warning banner is injected inside a
+  shadow root so the host page's CSS can't override it (and vice versa).
 - **`webNavigation` API** — redirect chain / lifecycle event tracking.
-- **Message passing** — how isolated extension contexts communicate asynchronously.
+- **Message passing with responses** — `sendResponse()` lets content.js ask
+  background.js "what's the verdict?" and act on the answer, not just fire-and-forget.
 
 ## Roadmap / next learning steps
 
