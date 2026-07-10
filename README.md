@@ -3,9 +3,6 @@
 A Chrome extension that analyzes pages in real time for common phishing patterns:
 lookalike domains, suspicious redirect chains, and credential-stealing forms.
 
-Built as a learning project alongside a BSc in Cybersecurity — this README doubles
-as notes on the concepts behind each feature.
-
 ## Features (v0.2)
 
 - **Lookalike domain detection** — flags domains like `paypa1.com` or `micr0soft-login.com`
